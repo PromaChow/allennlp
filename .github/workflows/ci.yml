@@ -17,13 +17,11 @@ env:
   MKL_THREADING_LAYER: GNU
   OMP_NUM_THREADS: "1"
   TOKENIZERS_PARALLELISM: "false"
-  TORCH_CPU_INSTALL:
-    pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
-    -c constraints.txt
-  TORCH_GPU_INSTALL:
-    pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu113
-    -c constraints.txt
+  PIP_CONSTRAINT: constraints.txt
+  TORCH_CPU_INSTALL: pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu -c constraints.txt
+  TORCH_GPU_INSTALL: pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu113 -c constraints.txt
   TORCH_VERSION: 1.12.0
+
 jobs:
   build_package:
     name: Build Package
@@ -40,15 +38,11 @@ jobs:
           miniconda-version: latest
           python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
       - name: Set build variables
-        run: 'echo "PYTHON_VERSION=$(python --version)" >> $GITHUB_ENV
-
+        run: |
+          echo "PYTHON_VERSION=$(python --version)" >> $GITHUB_ENV
           echo "RUNNER_ARCH=$(uname -m)" >> $GITHUB_ENV
-
           echo "WEEK_NUMBER=$(date +%V)" >> $GITHUB_ENV
-
           echo "TORCH_INSTALL=$TORCH_CPU_INSTALL" >> $GITHUB_ENV
-
-          '
       - id: measurement-4
         name: Record Measurement After Set build variables
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -59,20 +53,16 @@ jobs:
       - id: virtualenv-cache
         uses: actions/cache@v4
         with:
-          key:
-            ${{ env.CACHE_PREFIX }}-${{ env.WEEK_NUMBER }}-${{ runner.os }}-${{
-            env.RUNNER_ARCH }}-${{ env.PYTHON_VERSION }}-cpu-${{ hashFiles('setup.py')
-            }}-${{ hashFiles('*requirements.txt', 'constraints.txt') }}
+          key: ${{ env.CACHE_PREFIX }}-${{ env.WEEK_NUMBER }}-${{ runner.os }}-${{ env.RUNNER_ARCH }}-${{ env.PYTHON_VERSION }}-cpu-${{ hashFiles('setup.py') }}-${{ hashFiles('*requirements.txt', 'constraints.txt') }}
           path: .venv
       - if: steps.virtualenv-cache.outputs.cache-hit != 'true'
         name: Setup virtual environment (no cache hit)
-        run: 'python${{ env.DEFAULT_PYTHON_VERSION }} -m venv .venv
-
+        run: |
+          python${{ env.DEFAULT_PYTHON_VERSION }} -m venv .venv
           source .venv/bin/activate
-
+          # Pre-pin Notebook to avoid nbextensions API break in Notebook 7
+          pip install "notebook<7" "jupyter-server<2" -c "$PIP_CONSTRAINT"
           make install TORCH_INSTALL="$TORCH_INSTALL"
-
-          '
       - id: measurement-7
         name: Record Measurement After Setup virtual environment (no cache hit)
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -82,13 +72,10 @@ jobs:
           task: get-measurement
       - if: steps.virtualenv-cache.outputs.cache-hit == 'true'
         name: Setup virtual environment (cache hit)
-        run: "source .venv/bin/activate
-
-          pip install --no-deps -e .[all]
-
+        run: |
+          source .venv/bin/activate
+          pip install --no-deps -e .[all] -c "$PIP_CONSTRAINT"
           make download-extras
-
-          "
       - id: measurement-9
         name: Record Measurement After Setup virtual environment (cache hit)
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -97,11 +84,9 @@ jobs:
           label: Setup virtual environment (cache hit)
           task: get-measurement
       - name: Debug info
-        run: "source .venv/bin/activate
-
+        run: |
+          source .venv/bin/activate
           pip freeze
-
-          "
       - id: measurement-11
         name: Record Measurement After Debug info
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -111,15 +96,16 @@ jobs:
           task: get-measurement
       - if: github.event_name == 'schedule'
         name: Check and set nightly version
-        run:
-          "# Verify that current version is ahead of the last release.\nsource\
-          \ .venv/bin/activate\nLATEST=$(scripts/get_version.py latest)\nCURRENT=$(scripts/get_version.py\
-          \ current)\nif [ \"$CURRENT\" == \"$LATEST\" ]; then\n    echo \"Current\
-          \ version needs to be ahead of latest release in order to build nightly\
-          \ release\";\n    exit 1;\nfi\n# This is somewhat bizarre, but you can't\
-          \ set env variables to bash\n# commands in the action workflow - so we have\
-          \ to use this odd way of\n# exporting a variable instead.\necho \"ALLENNLP_VERSION_SUFFIX=dev$(date\
-          \ -u +%Y%m%d)\" >> $GITHUB_ENV\n"
+        run: |
+          # Verify that current version is ahead of the last release.
+          source .venv/bin/activate
+          LATEST=$(scripts/get_version.py latest)
+          CURRENT=$(scripts/get_version.py current)
+          if [ "$CURRENT" == "$LATEST" ]; then
+              echo "Current version needs to be ahead of latest release in order to build nightly release";
+              exit 1;
+          fi
+          echo "ALLENNLP_VERSION_SUFFIX=dev$(date -u +%Y%m%d)" >> $GITHUB_ENV
       - id: measurement-13
         name: Record Measurement After Check and set nightly version
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -129,11 +115,14 @@ jobs:
           task: get-measurement
       - if: github.event_name == 'release'
         name: Check version and release tag match
-        run:
-          "# Remove 'refs/tags/' to get the actual tag from the release.\nsource\
-          \ .venv/bin/activate\nTAG=${GITHUB_REF#refs/tags/};\nVERSION=$(scripts/get_version.py\
-          \ current)\nif [ \"$TAG\" != \"$VERSION\" ]; then\n    echo \"Bad tag or\
-          \ version. Tag $TAG does not match $VERSION\";\n    exit 1;\nfi\n"
+        run: |
+          source .venv/bin/activate
+          TAG=${GITHUB_REF#refs/tags/};
+          VERSION=$(scripts/get_version.py current)
+          if [ "$TAG" != "$VERSION" ]; then
+              echo "Bad tag or version. Tag $TAG does not match $VERSION";
+              exit 1;
+          fi
       - id: measurement-15
         name: Record Measurement After Check version and release tag match
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -142,15 +131,11 @@ jobs:
           label: Check version and release tag match
           task: get-measurement
       - name: Build core package
-        run: "# Just print out the version for debugging.
-
+        run: |
+          # Just print out the version for debugging.
           source .venv/bin/activate
-
           make version
-
           python setup.py bdist_wheel sdist
-
-          "
       - id: measurement-17
         name: Record Measurement After Build core package
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -165,11 +150,9 @@ jobs:
           path: dist
       - if: always()
         name: Clean up
-        run: "source .venv/bin/activate
-
+        run: |
+          source .venv/bin/activate
           pip uninstall --yes allennlp
-
-          "
       - id: measurement-20
         name: Record Measurement After Clean up
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -191,6 +174,7 @@ jobs:
           name: total-energy-consumption
           path: total_energy_consumption.json
     timeout-minutes: 18
+
   changelog:
     if: github.event_name == 'pull_request'
     name: CHANGELOG
@@ -203,12 +187,9 @@ jobs:
           task: start-measurement
       - uses: actions/checkout@v4
       - name: Check if source files have changed
-        run:
-          'git diff --name-only $(git merge-base origin/main HEAD) | grep ''^allennlp/.*\.py$''
-          && echo "source_files_changed=true" >> $GITHUB_ENV || echo "source_files_changed=false"
-          >> $GITHUB_ENV
-
-          '
+        run: |
+          git diff --name-only $(git merge-base origin/main HEAD) | grep '^allennlp/.*\.py$' \
+          && echo "source_files_changed=true" >> $GITHUB_ENV || echo "source_files_changed=false" >> $GITHUB_ENV
       - id: measurement-3
         name: Record Measurement After Check if source files have changed
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -218,15 +199,11 @@ jobs:
           task: get-measurement
       - if: env.source_files_changed == 'true'
         name: Check that CHANGELOG has been updated
-        run:
-          '# If this step fails, this means you haven''t updated the CHANGELOG.md
-
+        run: |
+          # If this step fails, this means you haven't updated the CHANGELOG.md
           # file with notes on your contribution.
-
-          git diff --name-only $(git merge-base origin/main HEAD) | grep ''^CHANGELOG.md$''
+          git diff --name-only $(git merge-base origin/main HEAD) | grep '^CHANGELOG.md$' \
           && echo "Thanks for helping keep our CHANGELOG up-to-date!"
-
-          '
       - id: measurement-5
         name: Record Measurement After Check that CHANGELOG has been updated
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -247,6 +224,7 @@ jobs:
         with:
           name: total-energy-consumption
           path: total_energy_consumption.json
+
   checks:
     name: ${{ matrix.task.name }}
     runs-on: ${{ matrix.task.runs_on }}
@@ -262,17 +240,12 @@ jobs:
           miniconda-version: latest
           python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
       - name: Set build variables
-        run: '# Get the exact Python version to use in the cache key.
-
+        run: |
+          # Get the exact Python version to use in the cache key.
           echo "PYTHON_VERSION=$(python --version)" >> $GITHUB_ENV
-
           echo "RUNNER_ARCH=$(uname -m)" >> $GITHUB_ENV
-
           # Use week number in cache key so we can refresh the cache weekly.
-
           echo "WEEK_NUMBER=$(date +%V)" >> $GITHUB_ENV
-
-          '
       - id: measurement-4
         name: Record Measurement After Set build variables
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -282,9 +255,8 @@ jobs:
           task: get-measurement
       - if: matrix.task.torch_platform == 'cpu'
         name: Set build variables (CPU only)
-        run: 'echo "TORCH_INSTALL=$TORCH_CPU_INSTALL" >> $GITHUB_ENV
-
-          '
+        run: |
+          echo "TORCH_INSTALL=$TORCH_CPU_INSTALL" >> $GITHUB_ENV
       - id: measurement-6
         name: Record Measurement After Set build variables (CPU only)
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -294,9 +266,8 @@ jobs:
           task: get-measurement
       - if: matrix.task.torch_platform == 'gpu'
         name: Set build variables (GPU only)
-        run: 'echo "TORCH_INSTALL=$TORCH_GPU_INSTALL" >> $GITHUB_ENV
-
-          '
+        run: |
+          echo "TORCH_INSTALL=$TORCH_GPU_INSTALL" >> $GITHUB_ENV
       - id: measurement-8
         name: Record Measurement After Set build variables (GPU only)
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -307,21 +278,15 @@ jobs:
       - id: virtualenv-cache
         uses: actions/cache@v4
         with:
-          key:
-            ${{ env.CACHE_PREFIX }}-${{ env.WEEK_NUMBER }}-${{ runner.os }}-${{
-            env.RUNNER_ARCH }}-${{ env.PYTHON_VERSION }}-${{ matrix.task.torch_platform
-            }}-${{ hashFiles('setup.py') }}-${{ hashFiles('*requirements.txt', 'constraints.txt')
-            }}
+          key: ${{ env.CACHE_PREFIX }}-${{ env.WEEK_NUMBER }}-${{ runner.os }}-${{ env.RUNNER_ARCH }}-${{ env.PYTHON_VERSION }}-${{ matrix.task.torch_platform }}-${{ hashFiles('setup.py') }}-${{ hashFiles('*requirements.txt', 'constraints.txt') }}
           path: .venv
       - if: steps.virtualenv-cache.outputs.cache-hit != 'true'
         name: Setup virtual environment (no cache hit)
-        run: 'python${{ env.DEFAULT_PYTHON_VERSION }} -m venv .venv
-
+        run: |
+          python${{ env.DEFAULT_PYTHON_VERSION }} -m venv .venv
           source .venv/bin/activate
-
+          pip install "notebook<7" "jupyter-server<2" -c "$PIP_CONSTRAINT"
           make install TORCH_INSTALL="$TORCH_INSTALL"
-
-          '
       - id: measurement-11
         name: Record Measurement After Setup virtual environment (no cache hit)
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -331,13 +296,10 @@ jobs:
           task: get-measurement
       - if: steps.virtualenv-cache.outputs.cache-hit == 'true'
         name: Setup virtual environment (cache hit)
-        run: "source .venv/bin/activate
-
-          pip install --no-deps -e .[all]
-
+        run: |
+          source .venv/bin/activate
+          pip install --no-deps -e .[all] -c "$PIP_CONSTRAINT"
           make download-extras
-
-          "
       - id: measurement-13
         name: Record Measurement After Setup virtual environment (cache hit)
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -349,17 +311,11 @@ jobs:
           ALLENNLP_VERSION_OVERRIDE: ""
         if: matrix.task.name == 'Model Tests'
         name: Pull and install models repo
-        run: "source .venv/bin/activate
-
+        run: |
+          source .venv/bin/activate
           git clone https://github.com/allenai/allennlp-models.git
-
           cd allennlp-models
-
-          # git checkout dependabot/pip/torch-gte-1.7.0-and-lt-1.13.0
-
-          pip install -e .[dev,all]
-
-          "
+          pip install -e .[dev,all] -c "$PIP_CONSTRAINT"
       - id: measurement-15
         name: Record Measurement After Pull and install models repo
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -368,11 +324,9 @@ jobs:
           label: Pull and install models repo
           task: get-measurement
       - name: Debug info
-        run: "source .venv/bin/activate
-
+        run: |
+          source .venv/bin/activate
           pip freeze
-
-          "
       - id: measurement-17
         name: Record Measurement After Debug info
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -381,11 +335,9 @@ jobs:
           label: Debug info
           task: get-measurement
       - name: Ensure torch up-to-date
-        run: "source .venv/bin/activate
-
+        run: |
+          source .venv/bin/activate
           python scripts/check_torch_version.py
-
-          "
       - id: measurement-19
         name: Record Measurement After Ensure torch up-to-date
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -394,11 +346,9 @@ jobs:
           label: Ensure torch up-to-date
           task: get-measurement
       - name: ${{ matrix.task.name }}
-        run: "source .venv/bin/activate
-
+        run: |
+          source .venv/bin/activate
           ${{ matrix.task.run }}
-
-          "
       - id: measurement-21
         name: Record Measurement After ${{ matrix.task.name }}
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -408,11 +358,9 @@ jobs:
           task: get-measurement
       - if: matrix.task.coverage_report
         name: Prepare coverage report
-        run: "mkdir coverage
-
+        run: |
+          mkdir coverage
           mv coverage.xml coverage/
-
-          "
       - id: measurement-23
         name: Record Measurement After Prepare coverage report
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -428,16 +376,11 @@ jobs:
           path: ./coverage
       - if: always()
         name: Clean up
-        run:
-          "# Could run into issues with the cache if we don't uninstall the editable.
-
+        run: |
+          # Could run into issues with the cache if we don't uninstall the editable.
           # See https://github.com/pypa/pip/issues/4537.
-
           source .venv/bin/activate
-
           pip uninstall --yes allennlp allennlp-models
-
-          "
       - id: measurement-26
         name: Record Measurement After Clean up
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -464,11 +407,9 @@ jobs:
         task:
           - coverage_report: false
             name: Lint
-            run: "make flake8
-
+            run: |
+              make flake8
               make typecheck
-
-              "
             runs_on: ubuntu-latest
             torch_platform: cpu
           - coverage_report: true
@@ -486,16 +427,14 @@ jobs:
             torch_platform: gpu
           - coverage_report: true
             name: Model Tests
-            run: "cd allennlp-models
-
+            run: |
+              cd allennlp-models
               make test-with-cov COV=allennlp
-
               mv coverage.xml ../
-
-              "
             runs_on: ubuntu-latest
             torch_platform: cpu
     timeout-minutes: 30
+
   docker:
     if: github.repository == 'allenai/allennlp'
     name: Docker (CUDA ${{ matrix.cuda }})
@@ -510,12 +449,13 @@ jobs:
       - env:
           CUDA: ${{ matrix.cuda }}
         name: Set image name and torch version
-        run:
-          "echo \"DOCKER_TORCH_VERSION=${TORCH_VERSION}-cuda${CUDA}-python3.8\"\
-          \ >> $GITHUB_ENV;\nif [[ $GITHUB_EVENT_NAME == 'release' ]]; then\n    echo\
-          \ \"DOCKER_IMAGE_NAME=allennlp/allennlp:${GITHUB_REF#refs/tags/}-cuda${CUDA}\"\
-          \ >> $GITHUB_ENV;\nelse\n    echo \"DOCKER_IMAGE_NAME=allennlp/commit:${GITHUB_SHA}-cuda${CUDA}\"\
-          \ >> $GITHUB_ENV;\nfi\n"
+        run: |
+          echo "DOCKER_TORCH_VERSION=${TORCH_VERSION}-cuda${CUDA}-python3.8" >> $GITHUB_ENV;
+          if [[ $GITHUB_EVENT_NAME == 'release' ]]; then
+              echo "DOCKER_IMAGE_NAME=allennlp/allennlp:${GITHUB_REF#refs/tags/}-cuda${CUDA}" >> $GITHUB_ENV;
+          else
+              echo "DOCKER_IMAGE_NAME=allennlp/commit:${GITHUB_SHA}-cuda${CUDA}" >> $GITHUB_ENV;
+          fi
       - id: measurement-3
         name: Record Measurement After Set image name and torch version
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -524,10 +464,8 @@ jobs:
           label: Set image name and torch version
           task: get-measurement
       - name: Build image
-        run:
-          'make docker-image DOCKER_IMAGE_NAME="$DOCKER_IMAGE_NAME" DOCKER_TORCH_VERSION="$DOCKER_TORCH_VERSION"
-
-          '
+        run: |
+          make docker-image DOCKER_IMAGE_NAME="$DOCKER_IMAGE_NAME" DOCKER_TORCH_VERSION="$DOCKER_TORCH_VERSION"
       - id: measurement-5
         name: Record Measurement After Build image
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -536,9 +474,8 @@ jobs:
           label: Build image
           task: get-measurement
       - name: Test image
-        run: "docker run --rm $DOCKER_IMAGE_NAME test-install
-
-          "
+        run: |
+          docker run --rm $DOCKER_IMAGE_NAME test-install
       - id: measurement-7
         name: Record Measurement After Test image
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -548,11 +485,8 @@ jobs:
           task: get-measurement
       - if: github.event_name == 'release' || github.event_name == 'push'
         name: Authenticate to Docker Hub
-        run:
-          "docker login -u ${{ secrets.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_PASSWORD
-          }}
-
-          "
+        run: |
+          docker login -u ${{ secrets.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_PASSWORD }}
       - id: measurement-9
         name: Record Measurement After Authenticate to Docker Hub
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -562,9 +496,8 @@ jobs:
           task: get-measurement
       - if: github.event_name == 'release' || github.event_name == 'push'
         name: Upload image
-        run: "docker push $DOCKER_IMAGE_NAME
-
-          "
+        run: |
+          docker push $DOCKER_IMAGE_NAME
       - id: measurement-11
         name: Record Measurement After Upload image
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -574,11 +507,9 @@ jobs:
           task: get-measurement
       - if: github.event_name == 'push' && matrix.cuda == '11.3'
         name: Upload default commit image
-        run: "docker tag $DOCKER_IMAGE_NAME allennlp/commit:${GITHUB_SHA}
-
+        run: |
+          docker tag $DOCKER_IMAGE_NAME allennlp/commit:${GITHUB_SHA}
           docker push allennlp/commit:${GITHUB_SHA}
-
-          "
       - id: measurement-13
         name: Record Measurement After Upload default commit image
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -588,11 +519,9 @@ jobs:
           task: get-measurement
       - if: github.event_name == 'release' && matrix.cuda == '11.3'
         name: Upload latest image
-        run: "docker tag $DOCKER_IMAGE_NAME allennlp/allennlp:latest
-
+        run: |
+          docker tag $DOCKER_IMAGE_NAME allennlp/allennlp:latest
           docker push allennlp/allennlp:latest
-
-          "
       - id: measurement-15
         name: Record Measurement After Upload latest image
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -618,6 +547,7 @@ jobs:
         cuda:
           - "11.3"
     timeout-minutes: 30
+
   docs:
     if: github.repository == 'allenai/allennlp'
     name: Docs
@@ -630,7 +560,7 @@ jobs:
           task: start-measurement
       - uses: actions/checkout@v4
       - if: github.event_name == 'release' || github.event_name == 'push'
-        name: "Setup SSH Client \U0001F511"
+        name: "Setup SSH Client 🔑"
         uses: webfactory/ssh-agent@v0.5.4
         with:
           ssh-private-key: ${{ secrets.DOCS_DEPLOY_KEY }}
@@ -639,15 +569,11 @@ jobs:
           miniconda-version: latest
           python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
       - name: Set build variables
-        run: 'echo "PYTHON_VERSION=$(python --version)" >> $GITHUB_ENV
-
+        run: |
+          echo "PYTHON_VERSION=$(python --version)" >> $GITHUB_ENV
           echo "RUNNER_ARCH=$(uname -m)" >> $GITHUB_ENV
-
           echo "WEEK_NUMBER=$(date +%V)" >> $GITHUB_ENV
-
           echo "TORCH_INSTALL=$TORCH_CPU_INSTALL" >> $GITHUB_ENV
-
-          '
       - id: measurement-5
         name: Record Measurement After Set build variables
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -658,20 +584,15 @@ jobs:
       - id: virtualenv-cache
         uses: actions/cache@v4
         with:
-          key:
-            ${{ env.CACHE_PREFIX }}-${{ env.WEEK_NUMBER }}-${{ runner.os }}-${{
-            env.RUNNER_ARCH }}-${{ env.PYTHON_VERSION }}-cpu-${{ hashFiles('setup.py')
-            }}-${{ hashFiles('*requirements.txt', 'constraints.txt') }}
+          key: ${{ env.CACHE_PREFIX }}-${{ env.WEEK_NUMBER }}-${{ runner.os }}-${{ env.RUNNER_ARCH }}-${{ env.PYTHON_VERSION }}-cpu-${{ hashFiles('setup.py') }}-${{ hashFiles('*requirements.txt', 'constraints.txt') }}
           path: .venv
       - if: steps.virtualenv-cache.outputs.cache-hit != 'true'
         name: Setup virtual environment (no cache hit)
-        run: 'python${{ env.DEFAULT_PYTHON_VERSION }} -m venv .venv
-
+        run: |
+          python${{ env.DEFAULT_PYTHON_VERSION }} -m venv .venv
           source .venv/bin/activate
-
+          pip install "notebook<7" "jupyter-server<2" -c "$PIP_CONSTRAINT"
           make install TORCH_INSTALL="$TORCH_INSTALL"
-
-          '
       - id: measurement-8
         name: Record Measurement After Setup virtual environment (no cache hit)
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -681,13 +602,10 @@ jobs:
           task: get-measurement
       - if: steps.virtualenv-cache.outputs.cache-hit == 'true'
         name: Setup virtual environment (cache hit)
-        run: "source .venv/bin/activate
-
-          pip install --no-deps -e .[all]
-
+        run: |
+          source .venv/bin/activate
+          pip install --no-deps -e .[all] -c "$PIP_CONSTRAINT"
           make download-extras
-
-          "
       - id: measurement-10
         name: Record Measurement After Setup virtual environment (cache hit)
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -696,11 +614,9 @@ jobs:
           label: Setup virtual environment (cache hit)
           task: get-measurement
       - name: Debug info
-        run: "source .venv/bin/activate
-
+        run: |
+          source .venv/bin/activate
           pip freeze
-
-          "
       - id: measurement-12
         name: Record Measurement After Debug info
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -709,12 +625,14 @@ jobs:
           label: Debug info
           task: get-measurement
       - name: Prepare environment
-        run:
-          "if [[ $GITHUB_EVENT_NAME == 'release' ]]; then\n    echo \"DOCS_FOLDER=${GITHUB_REF#refs/tags/}\"\
-          \ >> $GITHUB_ENV;\n    echo \"BASE_SOURCE_LINK=https://github.com/allenai/allennlp/blob/${GITHUB_REF#refs/tags/}/allennlp/\"\
-          \ >> $GITHUB_ENV;\nelse\n    echo \"DOCS_FOLDER=main\" >> $GITHUB_ENV;\n\
-          \    echo \"BASE_SOURCE_LINK=https://github.com/allenai/allennlp/blob/main/allennlp/\"\
-          \ >> $GITHUB_ENV;\nfi\n"
+        run: |
+          if [[ $GITHUB_EVENT_NAME == 'release' ]]; then
+              echo "DOCS_FOLDER=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV;
+              echo "BASE_SOURCE_LINK=https://github.com/allenai/allennlp/blob/${GITHUB_REF#refs/tags/}/allennlp/" >> $GITHUB_ENV;
+          else
+              echo "DOCS_FOLDER=main" >> $GITHUB_ENV;
+              echo "BASE_SOURCE_LINK=https://github.com/allenai/allennlp/blob/main/allennlp/" >> $GITHUB_ENV;
+          fi
       - id: measurement-14
         name: Record Measurement After Prepare environment
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -723,11 +641,9 @@ jobs:
           label: Prepare environment
           task: get-measurement
       - name: Build docs
-        run: "source .venv/bin/activate
-
+        run: |
+          source .venv/bin/activate
           env PYTHONPATH=. ./scripts/build_docs.sh
-
-          "
       - id: measurement-16
         name: Record Measurement After Build docs
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -736,9 +652,8 @@ jobs:
           label: Build docs
           task: get-measurement
       - name: Print the ref
-        run: "echo ${{ github.ref }}
-
-          "
+        run: |
+          echo ${{ github.ref }}
       - id: measurement-18
         name: Record Measurement After Print the ref
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -746,17 +661,12 @@ jobs:
           json-output: true
           label: Print the ref
           task: get-measurement
-      - if:
-          github.event_name == 'release' || (github.event_name == 'push' && github.ref
-          == 'refs/heads/main')
+      - if: github.event_name == 'release' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         name: Configure Git
-        run: 'git config --global user.email "ai2service@allenai.org"
-
+        run: |
+          git config --global user.email "ai2service@allenai.org"
           git config --global user.name "ai2service"
-
           git config --global push.default simple
-
-          '
       - id: measurement-20
         name: Record Measurement After Configure Git
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -764,27 +674,14 @@ jobs:
           json-output: true
           label: Configure Git
           task: get-measurement
-      - if:
-          github.event_name == 'release' || (github.event_name == 'push' && github.ref
-          == 'refs/heads/main')
+      - if: github.event_name == 'release' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         name: Stage docs
-        run: 'echo "Staging docs to $DOCS_FOLDER"
-
-
-          # Checkout allennlp-docs to /allennlp-docs
-
+        run: |
+          echo "Staging docs to $DOCS_FOLDER"
           git clone git@github.com:allenai/allennlp-docs.git ~/allennlp-docs
-
-
-          # Copy the generated docs to the checked out docs repo
-
           rm -rf ~/allennlp-docs/$DOCS_FOLDER/
-
           mkdir -p ~/allennlp-docs/$DOCS_FOLDER
-
           cp -r site/* ~/allennlp-docs/$DOCS_FOLDER
-
-          '
       - id: measurement-22
         name: Record Measurement After Stage docs
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -794,19 +691,43 @@ jobs:
           task: get-measurement
       - if: github.event_name == 'release'
         name: Update shortcuts
-        run:
-          "# Fail immediately if any step fails.\nset -e\nsource .venv/bin/activate\n\
-          \nLATEST=$(./scripts/get_version.py latest)\nSTABLE=$(./scripts/get_version.py\
-          \ stable)\n\ncd ~/allennlp-docs/\n\necho \"Updating latest/index.html to\
-          \ point to $LATEST\"\nmkdir -p latest\ncat >latest/index.html << EOL\n<!DOCTYPE\
-          \ html>\n<html>\n  <head>\n    <meta http-equiv=\"Refresh\" content=\"0;\
-          \ url=/${LATEST}/\" />\n  </head>\n  <body>\n    <p>Please follow <a href=\"\
-          /${LATEST}/\">this link</a>.</p>\n  </body>\n</html>\nEOL\n\necho \"Updating\
-          \ stable/index.html to point to $STABLE\"\nmkdir -p stable\ncat >stable/index.html\
-          \ << EOL\n<!DOCTYPE html>\n<html>\n  <head>\n    <meta http-equiv=\"Refresh\"\
-          \ content=\"0; url=/${STABLE}/\" />\n  </head>\n  <body>\n    <p>Please\
-          \ follow <a href=\"/${STABLE}/\">this link</a>.</p>\n  </body>\n</html>\n\
-          EOL\n"
+        run: |
+          # Fail immediately if any step fails.
+          set -e
+          source .venv/bin/activate
+
+          LATEST=$(./scripts/get_version.py latest)
+          STABLE=$(./scripts/get_version.py stable)
+
+          cd ~/allennlp-docs/
+
+          echo "Updating latest/index.html to point to $LATEST"
+          mkdir -p latest
+          cat >latest/index.html << EOL
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <meta http-equiv="Refresh" content="0; url=/${LATEST}/" />
+            </head>
+            <body>
+              <p>Please follow <a href="/${LATEST}/">this link</a>.</p>
+            </body>
+          </html>
+          EOL
+
+          echo "Updating stable/index.html to point to $STABLE"
+          mkdir -p stable
+          cat >stable/index.html << EOL
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <meta http-equiv="Refresh" content="0; url=/${STABLE}/" />
+            </head>
+            <body>
+              <p>Please follow <a href="/${STABLE}/">this link</a>.</p>
+            </body>
+          </html>
+          EOL
       - id: measurement-24
         name: Record Measurement After Update shortcuts
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -814,21 +735,14 @@ jobs:
           json-output: true
           label: Update shortcuts
           task: get-measurement
-      - if:
-          github.event_name == 'release' || (github.event_name == 'push' && github.ref
-          == 'refs/heads/main')
+      - if: github.event_name == 'release' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         name: Deploy docs
-        run: '# And push them up to GitHub
-
+        run: |
+          # And push them up to GitHub
           cd ~/allennlp-docs/
-
           git add -A
-
           git commit -m "automated update of the docs"
-
           git push
-
-          '
       - id: measurement-26
         name: Record Measurement After Deploy docs
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -838,21 +752,14 @@ jobs:
           task: get-measurement
       - if: github.event_name == 'release'
         name: Re-write docs commit history
-        run: 'cd ~/allennlp-docs/
-
+        run: |
+          cd ~/allennlp-docs/
           git checkout --orphan latest_branch
-
           git add -A
-
           git commit -m "Re-write commit history"
-
           git branch -D master  # remove old master branch
-
           git branch -m master  # rename clean new branch to master branch
-
           git push -f origin master
-
-          '
       - id: measurement-28
         name: Record Measurement After Re-write docs commit history
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -862,11 +769,9 @@ jobs:
           task: get-measurement
       - if: always()
         name: Clean up
-        run: "source .venv/bin/activate
-
+        run: |
+          source .venv/bin/activate
           pip uninstall --yes allennlp
-
-          "
       - id: measurement-30
         name: Record Measurement After Clean up
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -888,10 +793,9 @@ jobs:
           name: total-energy-consumption
           path: total_energy_consumption.json
     timeout-minutes: 15
+
   publish:
-    if:
-      github.repository == 'allenai/allennlp' && (github.event_name == 'release'
-      || github.event_name == 'schedule')
+    if: github.repository == 'allenai/allennlp' && (github.event_name == 'release' || github.event_name == 'schedule')
     name: PyPI
     needs:
       - style
@@ -913,9 +817,8 @@ jobs:
         with:
           python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
       - name: Install requirements
-        run: "pip install --upgrade pip setuptools wheel twine
-
-          "
+        run: |
+          pip install --upgrade pip setuptools wheel twine -c "$PIP_CONSTRAINT"
       - id: measurement-4
         name: Record Measurement After Install requirements
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -929,9 +832,8 @@ jobs:
           name: core-package
           path: dist
       - name: Publish core package
-        run: "twine upload -u allennlp -p ${{ secrets.PYPI_PASSWORD }} dist/*
-
-          "
+        run: |
+          twine upload -u allennlp -p ${{ secrets.PYPI_PASSWORD }} dist/*
       - id: measurement-7
         name: Record Measurement After Publish core package
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -953,6 +855,7 @@ jobs:
           name: total-energy-consumption
           path: total_energy_consumption.json
     timeout-minutes: 10
+
   style:
     name: Style
     runs-on: ubuntu-latest
@@ -968,9 +871,8 @@ jobs:
         with:
           python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
       - name: Install requirements
-        run: "grep -E '^black' dev-requirements.txt | xargs pip install
-
-          "
+        run: |
+          grep -E '^black' dev-requirements.txt | xargs -I{} pip install {} -c "$PIP_CONSTRAINT"
       - id: measurement-4
         name: Record Measurement After Install requirements
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -979,9 +881,8 @@ jobs:
           label: Install requirements
           task: get-measurement
       - name: Debug info
-        run: "pip freeze
-
-          "
+        run: |
+          pip freeze
       - id: measurement-6
         name: Record Measurement After Debug info
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -990,9 +891,8 @@ jobs:
           label: Debug info
           task: get-measurement
       - name: Run black
-        run: "black --check .
-
-          "
+        run: |
+          black --check .
       - id: measurement-8
         name: Record Measurement After Run black
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -1013,6 +913,7 @@ jobs:
         with:
           name: total-energy-consumption
           path: total_energy_consumption.json
+
   test_package:
     name: Test Package
     needs:
@@ -1030,9 +931,8 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install requirements
-        run: "pip install --upgrade pip setuptools wheel
-
-          "
+        run: |
+          pip install --upgrade pip setuptools wheel -c "$PIP_CONSTRAINT"
       - id: measurement-4
         name: Record Measurement After Install requirements
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -1046,10 +946,8 @@ jobs:
           name: core-package
           path: dist
       - name: Install core package
-        run:
-          "pip install $(ls dist/*.whl)${{ matrix.flavor }} -c constraints.txt
-
-          "
+        run: |
+          pip install $(ls dist/*.whl)${{ matrix.flavor }} -c "$PIP_CONSTRAINT"
       - id: measurement-7
         name: Record Measurement After Install core package
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -1058,9 +956,8 @@ jobs:
           label: Install core package
           task: get-measurement
       - name: Download NLTK prerequisites
-        run: "make download-extras
-
-          "
+        run: |
+          make download-extras
       - id: measurement-9
         name: Record Measurement After Download NLTK prerequisites
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -1069,9 +966,8 @@ jobs:
           label: Download NLTK prerequisites
           task: get-measurement
       - name: Cleanup workspace
-        run: "rm -rf allennlp/ setup.py tests/ test_fixtures/
-
-          "
+        run: |
+          rm -rf allennlp/ setup.py tests/ test_fixtures/
       - id: measurement-11
         name: Record Measurement After Cleanup workspace
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -1080,9 +976,8 @@ jobs:
           label: Cleanup workspace
           task: get-measurement
       - name: Pip freeze
-        run: "pip freeze
-
-          "
+        run: |
+          pip freeze
       - id: measurement-13
         name: Record Measurement After Pip freeze
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -1091,9 +986,8 @@ jobs:
           label: Pip freeze
           task: get-measurement
       - name: Test install
-        run: "allennlp test-install
-
-          "
+        run: |
+          allennlp test-install
       - id: measurement-15
         name: Record Measurement After Test install
         uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
@@ -1124,10 +1018,9 @@ jobs:
           - "3.8"
           - "3.9"
     timeout-minutes: 10
+
   upload_coverage:
-    if:
-      github.repository == 'allenai/allennlp' && (github.event_name == 'push' ||
-      github.event_name == 'pull_request')
+    if: github.repository == 'allenai/allennlp' && (github.event_name == 'push' || github.event_name == 'pull_request')
     name: Upload Coverage Report
     needs:
       - checks
