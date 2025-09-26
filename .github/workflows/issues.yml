@@ -1,54 +1,111 @@
 name: Issues Bot
-
 on:
-  # Uncomment this PR trigger for testing.
-  # pull_request:
-  #   branches:
-  #   - main
-  schedule:
-    - cron: '5 16 * * 1,2,3,4,5'  # runs at 16:05 UTC Monday - Friday
+  push:
+    branches:
+      - main
 
 jobs:
   close_stale_issues:
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    if: github.repository == 'allenai/allennlp'
     name: Close Stale Issues
-    if: github.repository == 'allenai/allennlp'
     runs-on: ubuntu-latest
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-    - uses: actions/checkout@v3
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
+        with:
+          json-output: true
+          task: start-measurement
+      - uses: actions/checkout@v3
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.7
+      - name: Install requirements
+        run: 'pip install PyGithub
 
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: 3.7
+          '
+      - id: measurement-4
+        name: Record Measurement After Install requirements
+        uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
+        with:
+          json-output: true
+          label: Install requirements
+          task: get-measurement
+      - name: Close stale issues
+        run: 'python scripts/close_stale_issues.py
 
-    - name: Install requirements
-      run: |
-        pip install PyGithub
-
-    - name: Close stale issues
-      run: |
-        python scripts/close_stale_issues.py
-
+          '
+      - id: measurement-6
+        name: Record Measurement After Close stale issues
+        uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
+        with:
+          json-output: true
+          label: Close stale issues
+          task: get-measurement
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
   ping_assignees:
-    name: Ping Inactive Assignees
-    if: github.repository == 'allenai/allennlp'
-    runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    if: github.repository == 'allenai/allennlp'
+    name: Ping Inactive Assignees
+    runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
+        with:
+          json-output: true
+          task: start-measurement
+      - uses: actions/checkout@v3
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.7
+      - name: Install requirements
+        run: 'pip install PyGithub
 
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: 3.7
+          '
+      - id: measurement-4
+        name: Record Measurement After Install requirements
+        uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
+        with:
+          json-output: true
+          label: Install requirements
+          task: get-measurement
+      - name: Ping inactive assignees
+        run: 'python scripts/ping_issue_assignees.py
 
-    - name: Install requirements
-      run: |
-        pip install PyGithub
-
-    - name: Ping inactive assignees
-      run: |
-        python scripts/ping_issue_assignees.py
+          '
+      - id: measurement-6
+        name: Record Measurement After Ping inactive assignees
+        uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
+        with:
+          json-output: true
+          label: Ping inactive assignees
+          task: get-measurement
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@862050e4f01f65b1436e5eca18ba4bd85562f0de
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
